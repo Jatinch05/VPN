@@ -19,9 +19,9 @@ print(f"Local IP Address: {local_ip}")
 # IPAddr = socket.gethostbyname(hostname)
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((local_ip, 5000))
+server.bind(('0.0.0.0', 5000))
 server.listen(1)
-print(f"Server is listening on {local_ip}")
+print(f"Server is listening on 0.0.0.0")
 
 client_socket, client_address = server.accept()
 print(f"Connection from {client_address}")
