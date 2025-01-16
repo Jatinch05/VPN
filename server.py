@@ -1,36 +1,57 @@
 import socket
+import pickle
+#from RSA import rsa,rsa_decryption
+from ECDH import ecdh_public_private_gen,ecdh_symmetric_key_gen,serialize_public_key,deserialize_public_key
+from AES import aes_encrypt,aes_decrypt
 
 def run_server():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', 5000))  
-    server_socket.listen(5)
-    print("Server is listening on port 5000...")
+    # Create a UDP socket
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.bind(("localhost", 5000))
+
+    print("Server started listening on port 5000...")
 
     while True:
-        client_socket, client_address = server_socket.accept()
-        print(f"Connection established with {client_address}")
+        # Receive data from the client
+        data, client_addr = server_socket.recvfrom(1024)
+        print(f"Received message: {data.decode()} from {client_addr}")
 
+        # Send a response to the client
+        server_socket.sendto(b"Hello, Client!", client_addr)
+
+        # Receive public key from the client
+        data, client_addr = server_socket.recvfrom(1024)
         try:
-            data = client_socket.recv(1024).decode()
-            target_ip, target_port = data.split(":")
-            target_port = int(target_port)
-            print(f"Received target address: {target_ip}:{target_port}")
-
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as forward_socket:
-                forward_socket.connect((target_ip, target_port))
-                forward_socket.sendall(b"Hello from the server!")
-
-                response = forward_socket.recv(1024)
-                print(f"Response from {target_ip}:{target_port}: {response.decode()}")
-
-            client_socket.sendall(response)
-
+            # Unpickle the received public key
+            client_public_key = pickle.loads(data)
+            print(f"Client's public key: {client_public_key}")
         except Exception as e:
-            print(f"Error: {e}")
-            client_socket.sendall(f"Error: {e}".encode())
+            print(f"Error unpickling data: {e}")
+            continue
 
-        finally:
-            client_socket.close()
+        print("Generating and sending the server's public key to the client...")
+        # Generate server's public/private keys
+        server_public_key, server_private_key = ecdh_public_private_gen()
+
+        # Serialize the public key
+        serialized_public_key = serialize_public_key(server_public_key)
+        message = pickle.dumps(serialized_public_key)
+        #sending client public keys
+        server_socket.sendto(message, client_addr)
+        print("sent public key")
+
+        #deserialize client's public key
+        client_public_key=deserialize_public_key(*client_public_key)
+        # generating symmetric key
+        symmetric_key=ecdh_symmetric_key_gen(server_private_key,client_public_key)
+        print(f"symmetric key = {symmetric_key}") #256-bit shared secret key
+
+        data,client_addr=server_socket.recvfrom(1024)
+        decrypted_data=aes_decrypt(symmetric_key,data)
+        print("decrypted data: ",decrypted_data)
+
+
 
 if __name__ == "__main__":
     run_server()
+
