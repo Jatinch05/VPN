@@ -47,16 +47,3 @@ def aes_decrypt(shared_key, ciphertext):
     plaintext = unpadder.update(decrypted_data) + unpadder.finalize()
     print(plaintext.decode())
     return plaintext.decode()
-
-# Example usage
-# Assuming you already have the shared secret from ECDH, which is 256 bits (32 bytes)
-shared_key = b'G\xf4.\x01\xfe\x17\xde&\xb0\xc8\x89\xc7+\xf8\xbb\xcf^\xcd\xa5\xba\xf3p\xbev\x14\xd5\xab\xfd\xf03\x7f\xea'  # Example shared secret key
-
-# Encrypting
-plaintext = "This is a secret message!"
-ciphertext = aes_encrypt(shared_key, plaintext)
-print(f"Encrypted ciphertext: {ciphertext.hex()}")
-
-# Decrypting
-decrypted_message = aes_decrypt(shared_key, ciphertext)
-print(f"Decrypted message: {decrypted_message}")
