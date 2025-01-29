@@ -1,96 +1,4 @@
-# import socket
-# import pickle
-# #from RSA import rsa,rsa_decryption
-# from ECDH import ecdh_public_private_gen,ecdh_symmetric_key_gen,serialize_public_key,deserialize_public_key
-# from AES import aes_encrypt,aes_decrypt
-# import asyncio
-#
-# async def manage_client(loop,transport,data,addr):
-#     print(f"Received message from {addr}: {data.decode()}")
-#     transport.sendto("hello Client".encode(),addr)
-#     #receiveing public key from client
-#
-#
-#
-# class Server_Protocol(asyncio.DatagramProtocol):
-#     def __init__(self,loop):
-#         self.loop=loop
-#
-#     def connection_made(self,transport):
-#         self.transport=transport
-#         print("Server is running...")
-#
-#     def datagram_received(self, data, addr):
-#         print(f"Data received from {addr}")
-#         asyncio.create_task(manage_client(self.loop,self.transport,data,addr))
-#
-#     def connection_lost(self, exc):
-#         print("connection lost: ",exec)
-#
-# async def run_server():
-#     loop=asyncio.get_running_loop()
-#     transport,protocol=await loop.create_datagram_endpoint(
-#         protocol_factory=lambda: Server_Protocol(loop),
-#         local_addr=('localhost',5000)
-#     )
-#     try:
-#         # Keep the server running
-#         await asyncio.sleep(float('inf'))
-#     except asyncio.CancelledError:
-#         pass
-#     finally:
-#         transport.close()
-#     # Create a UDP socket
-#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-#     server_socket.bind(("localhost", 5000))
-#
-#     print("Server started listening on port 5000...")
-#
-#     while True:
-#         # Receive data from the client
-#         data, client_addr = server_socket.recvfrom(1024)
-#         print(f"Received message: {data.decode()} from {client_addr}")
-#
-#         # Send a response to the client
-#         server_socket.sendto(b"Hello, Client!", client_addr)
-#
-#         # Receive public key from the client
-#         data, client_addr = server_socket.recvfrom(1024)
-#         try:
-#             # Unpickle the received public key
-#             client_public_key = pickle.loads(data)# received x,y cords of public key
-#             print(f"Client's public key: {client_public_key}")
-#         except Exception as e:
-#             print(f"Error unpickling data: {e}")
-#             continue
-#
-#         print("Generating and sending the server's public key to the client...")
-#         # Generate server's public/private objects
-#         server_public_key, server_private_key = ecdh_public_private_gen()
-#
-#         # Serialize the public key
-#         serialized_public_key = serialize_public_key(server_public_key) #bcz pickle cant dump cryptographic objects
-#         #we are converting public key object to (x,y)
-#         message = pickle.dumps(serialized_public_key)
-#         #sending client public keys
-#         server_socket.sendto(message, client_addr)
-#         print("sent public key")
-#
-#         #deserialize client's public key
-#         client_public_key=deserialize_public_key(*client_public_key) #converting (x,y) cords to public_key object
-#         # generating symmetric key
-#         symmetric_key=ecdh_symmetric_key_gen(server_private_key,client_public_key)
-#         print(f"symmetric key = {symmetric_key}") #256-bit shared secret key
-#
-#         data,client_addr=server_socket.recvfrom(1024)
-#         decrypted_data=aes_decrypt(symmetric_key,data)
-#         print("decrypted data: ",decrypted_data)
-#
-#
-#
-# if __name__ == "__main__":
-#     asyncio.run(run_server())
-
+import enum
 import sys
 import asyncio
 import pickle
@@ -101,41 +9,103 @@ from AES import aes_encrypt, aes_decrypt
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-async def manage_client(transport, data, addr):
-    print(f"Received message from {addr}: {data.decode()}")
-    transport.sendto("hello Client".encode(), addr)
 
-    # Generate server's public/private key pair using ECDH
-    server_public_key, server_private_key = ecdh_public_private_gen()
+async def manage_client(transport, data, addr, client_handler):
+    if client_handler.state == ClientState.HANDSHAKE_INITIATED:
+        print(f"Received message from {addr}: {data.decode()}")
+        transport.sendto("hello Client".encode(), addr)
 
-    # Serialize the public key to send as (x, y) tuple
-    serialized_public_key = serialize_public_key(server_public_key)
+        # Generate server's public/private key pair using ECDH
+        server_public_key, server_private_key = ecdh_public_private_gen()
 
-    # Convert the tuple into bytes using pickle
-    serialized_public_key_bytes = pickle.dumps(serialized_public_key)
+        # Store the private key in the client handler
+        client_handler.server_private_key = server_private_key
 
-    # Send server's public key to the client
-    transport.sendto(serialized_public_key_bytes, addr)
-    print("Sent public key to the client")
+        # Serialize the public key to send as (x, y) tuple
+        serialized_public_key = serialize_public_key(server_public_key)
+        print(f"Serialized public key: {serialized_public_key}")
 
-    # Unserialize the client's public key and generate the shared symmetric key
-    try:
-        # Deserialize the received data directly (as (x, y) tuple)
-        client_public_key = deserialize_public_key(*pickle.loads(data))  # Deserialize the pickled data
-        print(f"Client's public key (deserialized): {client_public_key}")
-    except Exception as e:
-        print(f"Error deserializing data: {e}")
-        return  # Handle the error gracefully
+        # Convert the tuple into bytes using pickle
+        serialized_public_key_bytes = pickle.dumps(serialized_public_key)
+        print(f"public key in bytes: {serialized_public_key_bytes}")
 
-    # Generate symmetric key using the ECDH method
-    symmetric_key = ecdh_symmetric_key_gen(server_private_key, client_public_key)
-    print(f"Symmetric key = {symmetric_key}")  # 256-bit shared secret key
+        # Send server's public key to the client
+        transport.sendto(serialized_public_key_bytes, addr)
+        print("Sent public key to the client:", serialized_public_key)
 
-    # Wait for further communication (receive encrypted data from the client)
+        # Transition to HANDSHAKE_COMPLETED state
+        client_handler.state = ClientState.HANDSHAKE_COMPLETED
+
+    elif client_handler.state == ClientState.HANDSHAKE_COMPLETED:
+        # Unserialize the client's public key and generate the shared symmetric key
+        try:
+            # Deserialize the received data directly (as (x, y) tuple)
+            client_public_key = deserialize_public_key(*pickle.loads(data))  # Deserialize the pickled data
+            print(f"Client's public key (deserialized): {client_public_key}")
+        except Exception as e:
+            print(f"Error deserializing data: {e}")
+            return  # Handle the error gracefully
+        # Use the stored server_private_key
+        server_private_key = client_handler.server_private_key
+        if server_private_key is None:
+            print("Server private key is missing!")
+            return
+        # Generate symmetric key using the ECDH method
+        symmetric_key = ecdh_symmetric_key_gen(server_private_key, client_public_key)
+        print(f"Symmetric key = {symmetric_key}")  # 256-bit shared secret key
+
+        # Transition to CONNECTED state
+        client_handler.state = ClientState.CONNECTED
+        print(client_handler.state)
+
+    elif client_handler.state == ClientState.CONNECTED:
+        # Handle encrypted communication
+        try:
+            decrypted_data = aes_decrypt(data, symmetric_key)
+            print(f"Decrypted data from {addr}: {decrypted_data.decode()}")
+
+            # Encrypt a response
+            response = "Message received!".encode()
+            encrypted_response = aes_encrypt(response, symmetric_key)
+            transport.sendto(encrypted_response, addr)
+        except Exception as e:
+            print(f"Error handling encrypted communication: {e}")
+            client_handler.state = ClientState.DISCONNECTED
+
+    elif client_handler.state == ClientState.DISCONNECTED:
+        print(f"Client {addr} has disconnected.")
+        # Clean up resources if necessary
+
+class ClientState(enum.Enum):
+    HANDSHAKE_INITIATED = enum.auto()  # key sharing initiated
+    HANDSHAKE_COMPLETED = enum.auto()  # sharing completed
+    CONNECTED = enum.auto()  # client connected
+    DISCONNECTED = enum.auto()  # client disconnected
+
+class ClientHandler:
+    def __init__(self, datagram_queue):
+        self.state = ClientState.HANDSHAKE_INITIATED
+        self.datagram_queue: asyncio.Queue[bytes] = datagram_queue
+        self.stopping = False
+        self.server_private_key=None
+
+    async def start(self):
+        while not self.stopping:
+            datagram = await self.datagram_queue.get()
+            # Process datagram based on current state
+            # This is just a placeholder; actual processing is done in manage_client
+            pass
+
+    async def __aenter__(self):
+        self.stopping = False
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.stopping = True
 
 class Server_Protocol(asyncio.DatagramProtocol):
-    def __init__(self, loop):
-        self.loop = loop
+    def __init__(self):
+        self.client_handlers = {}  # Store client handlers by address
 
     def connection_made(self, transport):
         self.transport = transport
@@ -143,8 +113,14 @@ class Server_Protocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data, addr):
         print(f"Data received from {addr}")
+        if addr not in self.client_handlers:
+            # Create a new client handler for this address
+            datagram_queue = asyncio.Queue()
+            client_handler = ClientHandler(datagram_queue)
+            self.client_handlers[addr] = client_handler
+            asyncio.create_task(client_handler.start())
         # Handle client interaction asynchronously
-        asyncio.create_task(manage_client(self.transport, data, addr))
+        asyncio.create_task(manage_client(self.transport, data, addr, self.client_handlers[addr]))
 
     def connection_lost(self, exc):
         print("Connection lost:", exc)
@@ -152,21 +128,37 @@ class Server_Protocol(asyncio.DatagramProtocol):
     def error_received(self, exc):
         print("Error received:", exc)
 
+
 async def run_server():
     loop = asyncio.get_running_loop()
     transport, protocol = await loop.create_datagram_endpoint(
-        protocol_factory=lambda: Server_Protocol(loop),
-        local_addr=('localhost', 5000)
+        protocol_factory=Server_Protocol,
+        local_addr=('127.0.0.1', 5000)
     )
-
-    try:
-        # Keep the server running indefinitely
-        await asyncio.sleep(float('inf'))
-    except asyncio.CancelledError:
-        pass
-    finally:
-        transport.close()
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(run_server())
 
+
+# Explanation of asyncio.get_running_loop() usage:
+
+# 1. Event Loop in `run_server()`:
+#    The `run_server()` function is the main asynchronous coroutine that is executed by the event loop.
+#    It does not need to explicitly retrieve the event loop using `asyncio.get_running_loop()`.
+#    This is because `asyncio.run()` automatically manages the event loop when running the main coroutine (`run_server()`).
+#    Inside `run_server()`, we wait for tasks like `manage_client()` to be scheduled and executed, and the event loop handles that for us.
+
+# 2. Event Loop in `manage_client()`:
+#    In contrast, `manage_client()` is an asynchronous task responsible for I/O operations (e.g., `sock_recvfrom` and `sock_sendto`),
+#    which require non-blocking behavior and must be scheduled by the event loop.
+#    Since `manage_client()` is called multiple times in parallel (once for each client interaction), it cannot manage the event loop itself.
+#    Therefore, it needs to access the currently running event loop using `asyncio.get_running_loop()` to perform asynchronous I/O operations.
+
+# Key Points:
+# - `run_server()` is the entry point for the server and runs within the event loop. It doesn't need to explicitly fetch the running loop, as the event loop is already being managed by `asyncio.run()`.
+# - `manage_client()` performs I/O tasks and needs access to the running event loop to handle non-blocking operations (e.g., receiving and sending data).
+
+# Why the distinction?
+# - `run_server()` is the top-level coroutine, responsible for scheduling tasks like `manage_client()`. As the main coroutine, it doesn't require direct interaction with the event loop.
+# - `manage_client()` is a smaller coroutine within the event loop, and it needs to access the event loop to handle non-blocking I/O operations. This is why `asyncio.get_running_loop()` is called inside `manage_client()`.
