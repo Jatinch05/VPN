@@ -53,13 +53,14 @@ async def manage_client(transport, data, addr, client_handler):
         # Generate symmetric key using the ECDH method
         symmetric_key = ecdh_symmetric_key_gen(server_private_key, client_public_key)
         print(f"Symmetric key = {symmetric_key}")  # 256-bit shared secret key
-
+        client_handler.symmetric_key = symmetric_key
         # Transition to CONNECTED state
         client_handler.state = ClientState.CONNECTED
         print(client_handler.state)
 
     elif client_handler.state == ClientState.CONNECTED:
         # Handle encrypted communication
+        symmetric_key=client_handler.symmetric_key
         try:
             decrypted_data = aes_decrypt(data, symmetric_key)
             print(f"Decrypted data from {addr}: {decrypted_data.decode()}")
@@ -71,10 +72,13 @@ async def manage_client(transport, data, addr, client_handler):
         except Exception as e:
             print(f"Error handling encrypted communication: {e}")
             client_handler.state = ClientState.DISCONNECTED
+            # Remove the client handler from the dictionary
+            del client_handler.server.client_handlers[addr]
 
     elif client_handler.state == ClientState.DISCONNECTED:
         print(f"Client {addr} has disconnected.")
-        # Clean up resources if necessary
+        # Remove the client handler from the dictionary
+        del client_handler.server.client_handlers[addr]
 
 class ClientState(enum.Enum):
     HANDSHAKE_INITIATED = enum.auto()  # key sharing initiated
@@ -88,6 +92,7 @@ class ClientHandler:
         self.datagram_queue: asyncio.Queue[bytes] = datagram_queue
         self.stopping = False
         self.server_private_key=None
+        self.symmetric_key=None
 
     async def start(self):
         while not self.stopping:
