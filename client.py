@@ -1,19 +1,18 @@
 import asyncio
-import sys
+import enum
 import socket
 import pickle
+
+from twisted.runner.procmon import transport
+
 from ECDH import ecdh_public_private_gen, ecdh_symmetric_key_gen, serialize_public_key, deserialize_public_key
 from AES import aes_encrypt, aes_decrypt
 
-# Switch to SelectorEventLoop for compatibility with Windows
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-class ClientState:
-    HANDSHAKE_INITIATED = "HANDSHAKE_INITIATED"
-    HANDSHAKE_COMPLETED = "HANDSHAKE_COMPLETED"
-    CONNECTED = "CONNECTED"
-    DISCONNECTED = "DISCONNECTED"
+class ClientState(enum.IntEnum):
+    HANDSHAKE_INITIATED = enum.auto()
+    HANDSHAKE_COMPLETED = enum.auto()
+    CONNECTED = enum.auto()
+    DISCONNECTED = enum.auto()
 
 class ClientHandler:
     def __init__(self):
@@ -24,6 +23,7 @@ class ClientHandler:
 
     def handle_server_response(self, data):
         if self.state == ClientState.HANDSHAKE_INITIATED:
+            print("Handshake initiated")
             # Expecting "hello Client" from server (text data)
             try:
                 message = data.decode()  # Only decode if expecting text
@@ -33,6 +33,7 @@ class ClientHandler:
                     self.client_public_key, self.client_private_key = ecdh_public_private_gen()
                     serialized_public_key = serialize_public_key(self.client_public_key)
                     self.state = ClientState.HANDSHAKE_COMPLETED
+                    print("Handshake completed")
                     return pickle.dumps(serialized_public_key)  # Send serialized public key
             except UnicodeDecodeError:
                 print("Error decoding handshake message as text.")
@@ -41,25 +42,22 @@ class ClientHandler:
             # Expecting server's serialized public key (binary data)
             try:
                 server_public_key = deserialize_public_key(*pickle.loads(data))
-                print(f"Server's public key (deserialized): {server_public_key}")
+                #print(f"Server's public key (deserialized): {server_public_key}")
 
                 # Generate symmetric key
                 self.symmetric_key = ecdh_symmetric_key_gen(self.client_private_key, server_public_key)
-                print(f"Symmetric key = {self.symmetric_key}")
+                #print(f"Symmetric key = {self.symmetric_key}")
                 self.state = ClientState.CONNECTED
+                print("State = Connected")
+                return "hello testing".encode()
             except Exception as e:
                 print(f"Error during key exchange: {e}")
 
         elif self.state == ClientState.CONNECTED:
             # Encrypted communication
             try:
-                decrypted_message = aes_decrypt(data, self.symmetric_key).decode()
-                print(f"Decrypted message from server: {decrypted_message}")
-
-                # Send encrypted response
-                response = "Acknowledged!".encode()
-                encrypted_response = aes_encrypt(response, self.symmetric_key)
-                return encrypted_response
+               return "hello testing".encode()
+               #encrypted convo
             except Exception as e:
                 print(f"Error during encrypted communication: {e}")
                 self.state = ClientState.DISCONNECTED
@@ -75,7 +73,6 @@ class ClientProtocol(asyncio.DatagramProtocol):
 
     def connection_made(self, transport):
         self.transport = transport
-        print("Initiating handshake...")
         self.transport.sendto("hello Server".encode(), ("127.0.0.1", 5000))
 
     def datagram_received(self, data, addr):

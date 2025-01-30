@@ -1,17 +1,13 @@
 import enum
-import sys
 import asyncio
 import pickle
 from ECDH import ecdh_public_private_gen, ecdh_symmetric_key_gen, serialize_public_key, deserialize_public_key
 from AES import aes_encrypt, aes_decrypt
 
-# Switch to SelectorEventLoop for compatibility with Windows
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 
 async def manage_client(transport, data, addr, client_handler):
     if client_handler.state == ClientState.HANDSHAKE_INITIATED:
+        print("Handshake initiated")
         print(f"Received message from {addr}: {data.decode()}")
         transport.sendto("hello Client".encode(), addr)
 
@@ -23,62 +19,65 @@ async def manage_client(transport, data, addr, client_handler):
 
         # Serialize the public key to send as (x, y) tuple
         serialized_public_key = serialize_public_key(server_public_key)
-        print(f"Serialized public key: {serialized_public_key}")
+        #print(f"Serialized public key: {serialized_public_key}")
 
         # Convert the tuple into bytes using pickle
         serialized_public_key_bytes = pickle.dumps(serialized_public_key)
-        print(f"public key in bytes: {serialized_public_key_bytes}")
+        #print(f"public key in bytes: {serialized_public_key_bytes}")
 
         # Send server's public key to the client
         transport.sendto(serialized_public_key_bytes, addr)
-        print("Sent public key to the client:", serialized_public_key)
+        #print("Sent public key to the client:", serialized_public_key)
 
         # Transition to HANDSHAKE_COMPLETED state
         client_handler.state = ClientState.HANDSHAKE_COMPLETED
+        print("Handshake Completed")
 
     elif client_handler.state == ClientState.HANDSHAKE_COMPLETED:
         # Unserialize the client's public key and generate the shared symmetric key
         try:
             # Deserialize the received data directly (as (x, y) tuple)
             client_public_key = deserialize_public_key(*pickle.loads(data))  # Deserialize the pickled data
-            print(f"Client's public key (deserialized): {client_public_key}")
+           # print(f"Client's public key (deserialized): {client_public_key}")
         except Exception as e:
             print(f"Error deserializing data: {e}")
+            client_handler.state=ClientState.DISCONNECTED
             return  # Handle the error gracefully
         # Use the stored server_private_key
         server_private_key = client_handler.server_private_key
         if server_private_key is None:
             print("Server private key is missing!")
+            client_handler.state=ClientState.DISCONNECTED
             return
         # Generate symmetric key using the ECDH method
         symmetric_key = ecdh_symmetric_key_gen(server_private_key, client_public_key)
-        print(f"Symmetric key = {symmetric_key}")  # 256-bit shared secret key
+        #print(f"Symmetric key = {symmetric_key}")  # 256-bit shared secret key
         client_handler.symmetric_key = symmetric_key
         # Transition to CONNECTED state
         client_handler.state = ClientState.CONNECTED
-        print(client_handler.state)
+        print("State = Connected")
 
     elif client_handler.state == ClientState.CONNECTED:
         # Handle encrypted communication
         symmetric_key=client_handler.symmetric_key
-        try:
-            decrypted_data = aes_decrypt(data, symmetric_key)
-            print(f"Decrypted data from {addr}: {decrypted_data.decode()}")
 
-            # Encrypt a response
-            response = "Message received!".encode()
-            encrypted_response = aes_encrypt(response, symmetric_key)
-            transport.sendto(encrypted_response, addr)
+        try:
+          print(data.decode())
+          #encrypted convo
+
         except Exception as e:
             print(f"Error handling encrypted communication: {e}")
             client_handler.state = ClientState.DISCONNECTED
             # Remove the client handler from the dictionary
-            del client_handler.server.client_handlers[addr]
+            print()
+            del Server_Protocol().client_handlers[addr]
+        print("inside Connected")
 
     elif client_handler.state == ClientState.DISCONNECTED:
         print(f"Client {addr} has disconnected.")
         # Remove the client handler from the dictionary
-        del client_handler.server.client_handlers[addr]
+        print(Server_Protocol().client_handlers[addr])
+        del Server_Protocol().client_handlers[addr]
 
 class ClientState(enum.Enum):
     HANDSHAKE_INITIATED = enum.auto()  # key sharing initiated
@@ -89,7 +88,7 @@ class ClientState(enum.Enum):
 class ClientHandler:
     def __init__(self, datagram_queue):
         self.state = ClientState.HANDSHAKE_INITIATED
-        self.datagram_queue: asyncio.Queue[bytes] = datagram_queue
+        self.datagram_queue: asyncio.Queue[bytes] = datagram_queue #creating an asynchronous queue that stores bytes
         self.stopping = False
         self.server_private_key=None
         self.symmetric_key=None
@@ -101,37 +100,36 @@ class ClientHandler:
             # This is just a placeholder; actual processing is done in manage_client
             pass
 
-    async def __aenter__(self):
+    async def __aenter__(self):#stopping set to false upon entering this Client handler class
         self.stopping = False
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb):#stopping set to true upon exiting
         self.stopping = True
 
-class Server_Protocol(asyncio.DatagramProtocol):
+class Server_Protocol(asyncio.DatagramProtocol):  # datagram protocol already has datagram received functions
     def __init__(self):
-        self.client_handlers = {}  # Store client handlers by address
+        self.client_handlers = {}  # to store client addresses
 
     def connection_made(self, transport):
         self.transport = transport
-        print("Server is running...")
+        print("Server is running")
 
     def datagram_received(self, data, addr):
-        print(f"Data received from {addr}")
-        if addr not in self.client_handlers:
-            # Create a new client handler for this address
+        print(f"Data received from {addr}: {data}")
+        if addr not in self.client_handlers:  # new client detected
             datagram_queue = asyncio.Queue()
             client_handler = ClientHandler(datagram_queue)
-            self.client_handlers[addr] = client_handler
-            asyncio.create_task(client_handler.start())
-        # Handle client interaction asynchronously
+            self.client_handlers[addr] = client_handler  # assigning a client_handler object to each addr
+        print(self.client_handlers)
+        # creating a task for each datagram received
         asyncio.create_task(manage_client(self.transport, data, addr, self.client_handlers[addr]))
 
     def connection_lost(self, exc):
-        print("Connection lost:", exc)
+        print("connection lost,error generated: ", exc)
 
     def error_received(self, exc):
-        print("Error received:", exc)
+        print("Connection lost,error received", exc)
 
 
 async def run_server():
@@ -144,6 +142,7 @@ async def run_server():
 
 if __name__ == "__main__":
     asyncio.run(run_server())
+
 
 
 # Explanation of asyncio.get_running_loop() usage:

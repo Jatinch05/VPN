@@ -22,8 +22,8 @@ def aes_encrypt(shared_key, plaintext):
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(padded_data) + encryptor.finalize()
 
-    print("encrypted: ",iv+ciphertext)
-    print(type(iv+ciphertext))
+    # print("encrypted: ",iv+ciphertext)
+    # print(type(iv+ciphertext))
     # Return the ciphertext and the IV (IV must be sent with the ciphertext)
     return iv + ciphertext
 
