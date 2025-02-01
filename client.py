@@ -2,11 +2,85 @@ import asyncio
 import enum
 import socket
 import pickle
-
-from twisted.runner.procmon import transport
-
 from ECDH import ecdh_public_private_gen, ecdh_symmetric_key_gen, serialize_public_key, deserialize_public_key
-from AES import aes_encrypt, aes_decrypt
+
+from aioquic.asyncio import connect
+from aioquic.asyncio.protocol import QuicConnectionProtocol
+from aioquic.quic import events
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.events import QuicEvent
+from aioquic.quic.events import (
+ HandshakeCompleted,
+ ConnectionTerminated,
+ ConnectionIdIssued,
+ StreamReset,
+ DatagramFrameReceived,
+ StreamDataReceived,
+ ConnectionIdRetired,
+ PingAcknowledged,
+ ProtocolNegotiated,
+ StopSendingReceived,
+)
+from aioquic.quic.logger import QuicLogger
+from dataclasses import dataclass
+
+@dataclass
+class UnknownFrameReceived(QuicEvent):
+    """
+    Event triggered when unknown frame type is received
+    """
+    frame_type : int
+    raw_data : bytes
+
+class CustomQuicProtocol(QuicConnectionProtocol):
+    def __init__(self,*args,**kwargs):
+        super.__init__(*args,**kwargs)
+        self.logger=QuicLogger()
+
+    def quic_event_received(self, event):
+        if isinstance(event,HandshakeCompleted):
+            print("Handshake Completed!")
+            self._quic.send_stream_data(self._quic.get_next_available_stream_id(),b"hello server!")
+
+        elif isinstance(event,ConnectionTerminated):
+            print("Connection Terminated",event.error_code)
+
+        elif isinstance(event,DatagramFrameReceived):
+            print(f"Datagram received: {event.data.decode()} ")
+
+        elif isinstance(event,UnknownFrameReceived):
+            print(f"Unknown frame type:({event.frame_type}) arrived with data: {event.raw_data.decode()}")
+
+        elif isinstance(event,ConnectionTerminated):
+            print(f"Connection closed error:{event.error_code}")
+            print(f"Connection termination frame type:{event.frame_type}, reason : {event.reason_phrase}")
+
+        elif isinstance(event,PingAcknowledged):
+            print(f"unique id of ping :{event.uid}")
+
+        elif isinstance(event,ProtocolNegotiated):
+            print(f"ALPN protocol : {event.alpn_protocol}")
+
+        elif isinstance(event,StopSendingReceived):
+            print(f"error code:{event.error_code}")
+
+        elif isinstance(event,StreamDataReceived):
+            print(f"Stream received:{event.data} from {event.stream_id}")
+            if event.end_stream:
+                print("End of stream received")
+
+        elif isinstance(event,StreamReset):
+            print(f"{event.stream_id} stream restarted ,error:{event.error_code} ")
+
+
+    def send_custom_data(self):#for sending control messages
+        stream_id=self._quic.get_next_available_stream_id()
+        self._quic.send_stream_data(stream_id,b"control stmts",end_stream=True)#unidirectional control message
+
+    def send_datagram(self,data):
+        self._quic.send_datagram_frame(data)
+
+
 
 class ClientState(enum.IntEnum):
     HANDSHAKE_INITIATED = enum.auto()
@@ -89,6 +163,12 @@ class ClientProtocol(asyncio.DatagramProtocol):
 
 
 async def run_client():
+    configuration=QuicConfiguration(is_client=False)
+    configuration.alpn_protocols = ["h3", "hq-29"]  # Example 9: ALPN protocols
+    configuration.congestion_control_algorithm = "cubic"  # Example 10: Congestion control
+    configuration.quic_logger = QuicLogger()  # Example 11: Logging QUIC events
+    configuration.load_cert_chain(certfile="cert.pem", keyfile="key.pem")  # Example 12: TLS setup
+
     loop = asyncio.get_running_loop()
     on_con_lost = loop.create_future()
     client_handler = ClientHandler()
@@ -101,6 +181,19 @@ async def run_client():
         await on_con_lost
     finally:
         transport.close()
+
+    async with connect("localhost", 4433, configuration=configuration, create_protocol=CustomQuicProtocol) as protocol:
+        protocol: CustomQuicProtocol
+
+        # Send custom data
+        protocol.send_custom_data()
+
+        # Send datagram
+        protocol.send_datagram(b"Custom datagram data")
+
+        # Wait for events
+        await asyncio.sleep(10)  # Keep connection open to receive responses
+
 
 if __name__ == "__main__":
     asyncio.run(run_client())

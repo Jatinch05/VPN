@@ -1,8 +1,44 @@
 import enum
 import asyncio
+
+from aioquic.asyncio.protocol import QuicConnectionProtocol
+from aioquic.quic import events
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.events import QuicEvent
+from aioquic.quic.events import (
+ HandshakeCompleted,
+ ConnectionTerminated,
+ ConnectionIdIssued,
+ StreamReset,
+ DatagramFrameReceived,
+ StreamDataReceived,
+ ConnectionIdRetired,
+ PingAcknowledged,
+ ProtocolNegotiated,
+ StopSendingReceived,
+)
+from aioquic.quic.logger import QuicLogger
+from dataclasses import dataclass
 import pickle
 from ECDH import ecdh_public_private_gen, ecdh_symmetric_key_gen, serialize_public_key, deserialize_public_key
-from AES import aes_encrypt, aes_decrypt
+
+@dataclass
+class UnknownFrameReceived(QuicEvent):
+    """
+    Event triggered when unknown frame type arrives
+    """
+    frame_type : int
+    raw_data : bytes
+
+class CustomQuicProtocol(QuicConnectionProtocol):
+    def __init__(self,*args,**kwargs):
+        super.__init__(*args,**kwargs)
+        self.logger=QuicLogger()
+
+    def quic_event_received(self, event):#get current event from QuicEvent file
+        if isinstance(event,HandshakeCompleted):
+            print("Handshake completed")
+
 
 
 async def manage_client(transport, data, addr, client_handler):
